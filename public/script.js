@@ -939,6 +939,76 @@ ${
     agendamento.status === "agendado"
         ? `
             <button
+                class="botao-remarcar"
+                onclick="mostrarRemarcacao(${agendamento.id}, ${agendamento.profissional_id})"
+            >
+                🔄 Remarcar atendimento
+            </button>
+
+            <div
+                id="areaRemarcacao"
+                class="area-remarcacao"
+                style="display: none;"
+            >
+
+                <h4>Escolha uma nova data e horário</h4>
+
+                <label for="novaData">
+                    Nova data:
+                </label>
+
+                <input
+                    type="date"
+                    id="novaData"
+                >
+
+                <label for="novoHorario">
+                    Novo horário:
+                </label>
+
+                <select id="novoHorario">
+
+                    <option value="">
+                        Selecione um horário
+                    </option>
+
+                    <option value="08:00">08:00</option>
+                    <option value="08:30">08:30</option>
+                    <option value="09:00">09:00</option>
+                    <option value="09:30">09:30</option>
+                    <option value="10:00">10:00</option>
+                    <option value="10:30">10:30</option>
+                    <option value="11:00">11:00</option>
+                    <option value="11:30">11:30</option>
+                    <option value="13:00">13:00</option>
+                    <option value="13:30">13:30</option>
+                    <option value="14:00">14:00</option>
+                    <option value="14:30">14:30</option>
+                    <option value="15:00">15:00</option>
+                    <option value="15:30">15:30</option>
+                    <option value="16:00">16:00</option>
+                    <option value="16:30">16:30</option>
+                    <option value="17:00">17:00</option>
+                    <option value="17:30">17:30</option>
+
+                </select>
+
+                <button
+                    class="botao-confirmar-remarcacao"
+                    onclick="confirmarRemarcacao(${agendamento.id})"
+                >
+                    ✅ Confirmar nova data e horário
+                </button>
+
+            </div>
+        `
+        : ""
+}
+
+${
+    agendamento.status === "agendado"
+        ? `
+            <button
                 class="botao-cancelar"
                 onclick="cancelarAtendimento(${agendamento.id})"
             >
@@ -1023,6 +1093,179 @@ async function cancelarAtendimento(id) {
 
         alert(
             "❌ Não foi possível cancelar o atendimento."
+        );
+
+    }
+
+}
+
+// ========================================
+// MOSTRAR ÁREA DE REMARCAÇÃO
+// ========================================
+
+
+async function mostrarRemarcacao(id, profissionalId) {
+    const area = document.querySelector("#areaRemarcacao");
+    const campoData = document.querySelector("#novaData");
+    const campoHorario = document.querySelector("#novoHorario");
+
+    if (!area || !campoData || !campoHorario) {
+        return;
+    }
+
+    area.style.display = "block";
+
+    // Define a data mínima como hoje
+    const hoje = new Date();
+    const ano = hoje.getFullYear();
+    const mes = String(hoje.getMonth() + 1).padStart(2, "0");
+    const dia = String(hoje.getDate()).padStart(2, "0");
+
+    campoData.min = `${ano}-${mes}-${dia}`;
+
+    // Limpa os horários até o cliente escolher uma data
+    campoHorario.innerHTML = `
+        <option value="">Selecione uma data primeiro</option>
+    `;
+
+    campoData.onchange = async function () {
+        const data = campoData.value;
+
+        if (!data) {
+            campoHorario.innerHTML = `
+                <option value="">Selecione uma data primeiro</option>
+            `;
+            return;
+        }
+
+        campoHorario.innerHTML = `
+            <option value="">Carregando horários...</option>
+        `;
+
+        try {
+            const resposta = await fetch(
+                `/api/horarios-disponiveis?profissional_id=${encodeURIComponent(profissionalId)}&data=${encodeURIComponent(data)}`
+            );
+
+            const dados = await resposta.json();
+
+            if (!resposta.ok) {
+                throw new Error(
+                    dados.mensagem || "Erro ao buscar horários."
+                );
+            }
+
+            campoHorario.innerHTML = `
+                <option value="">Selecione um horário</option>
+            `;
+
+            if (!dados.horarios || dados.horarios.length === 0) {
+                campoHorario.innerHTML = `
+                    <option value="">Nenhum horário disponível</option>
+                `;
+                return;
+            }
+
+            dados.horarios.forEach((horario) => {
+                const opcao = document.createElement("option");
+                opcao.value = horario;
+                opcao.textContent = horario;
+                campoHorario.appendChild(opcao);
+            });
+
+        } catch (erro) {
+            console.error("Erro ao carregar horários:", erro);
+
+            campoHorario.innerHTML = `
+                <option value="">Erro ao carregar horários</option>
+            `;
+        }
+    };
+}
+
+
+// ========================================
+// CONFIRMAR REMARCAÇÃO
+// ========================================
+
+async function confirmarRemarcacao(id) {
+
+    const novaData =
+        document.querySelector("#novaData").value;
+
+    const novoHorario =
+        document.querySelector("#novoHorario").value;
+
+    if (!novaData) {
+
+        alert("Escolha uma nova data.");
+        return;
+
+    }
+
+    if (!novoHorario) {
+
+        alert("Escolha um novo horário.");
+        return;
+
+    }
+
+    const confirmar = confirm(
+        `Deseja remarcar seu atendimento para ${novaData} às ${novoHorario}?`
+    );
+
+    if (!confirmar) {
+        return;
+    }
+
+    try {
+
+        const resposta = await fetch(
+            `/api/agendamentos/${id}/remarcar`,
+            {
+                method: "PUT",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    data: novaData,
+                    horario: novoHorario
+                })
+            }
+        );
+
+        const dados = await resposta.json();
+
+        if (!resposta.ok) {
+
+            alert("❌ " + dados.mensagem);
+            return;
+
+        }
+
+        alert(
+            "✅ Atendimento remarcado com sucesso!"
+        );
+
+        // Consultar novamente o atendimento
+        const botaoConsultar =
+            document.querySelector("#consultarAtendimento");
+
+        if (botaoConsultar) {
+            botaoConsultar.click();
+        }
+
+    } catch (erro) {
+
+        console.error(
+            "Erro ao remarcar:",
+            erro
+        );
+
+        alert(
+            "❌ Não foi possível remarcar o atendimento."
         );
 
     }

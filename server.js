@@ -3,7 +3,7 @@ const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 
 const app = express();
-const PORTA = 3000;
+const PORTA = process.env.PORT || 3000;
 
 // ========================================
 // CONFIGURAÇÕES
@@ -15,6 +15,52 @@ app.use(express.json());
 // Permite receber dados de formulários
 app.use(express.urlencoded({ extended: true }));
 
+// ========================================
+// PROTEÇÃO DO PAINEL ADMINISTRATIVO
+// ========================================
+
+const usuarioAdmin = process.env.ADMIN_USER;
+const senhaAdmin = process.env.ADMIN_PASSWORD;
+
+function protegerAdmin(req, res, next) {
+    if (!usuarioAdmin || !senhaAdmin) {
+        return res.status(503).send(
+            "Painel administrativo não configurado."
+        );
+    }
+
+    const auth = req.headers.authorization || "";
+    const [tipo, credenciais] = auth.split(" ");
+
+    let usuario = "";
+    let senha = "";
+
+    if (tipo === "Basic" && credenciais) {
+        try {
+            const texto = Buffer.from(credenciais, "base64").toString("utf8");
+            const separador = texto.indexOf(":");
+
+            if (separador !== -1) {
+                usuario = texto.slice(0, separador);
+                senha = texto.slice(separador + 1);
+            }
+        } catch (erro) {
+            // Credenciais inválidas
+        }
+    }
+
+    if (usuario === usuarioAdmin && senha === senhaAdmin) {
+        return next();
+    }
+
+    res.set("WWW-Authenticate", 'Basic realm="Painel Barbearia"');
+    return res.status(401).send("Acesso não autorizado.");
+}
+
+// Protege a página e todas as rotas administrativas
+app.use("/admin.html", protegerAdmin);
+app.use("/api/admin", protegerAdmin);
+
 // Define a pasta pública do site
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -22,7 +68,7 @@ app.use(express.static(path.join(__dirname, "public")));
 // BANCO DE DADOS
 // ========================================
 
-const caminhoBanco = path.join(
+const caminhoBanco = process.env.DATABASE_PATH || path.join(
     __dirname,
     "database",
     "banco.db"
@@ -482,6 +528,7 @@ app.get("/api/agendamentos/:id", (req, res) => {
     const sql = `
         SELECT
             agendamentos.id,
+            agendamentos.profissional_id,
             clientes.nome AS cliente,
             clientes.whatsapp,
             clientes.email,
@@ -647,6 +694,96 @@ app.post("/api/agendamentos", (req, res) => {
 
                     const clienteId = this.lastID;
 
+                    // ========================================
+// LISTAR HORÁRIOS DISPONÍVEIS
+// ========================================
+
+app.get("/api/horarios-disponiveis", (req, res) => {
+
+    const {
+        profissional_id,
+        data
+    } = req.query;
+
+    if (!profissional_id || !data) {
+
+        return res.status(400).json({
+            sucesso: false,
+            mensagem: "Informe o profissional e a data."
+        });
+
+    }
+
+    // Horários de funcionamento
+    const horarios = [
+        "08:00",
+        "08:30",
+        "09:00",
+        "09:30",
+        "10:00",
+        "10:30",
+        "11:00",
+        "11:30",
+        "13:00",
+        "13:30",
+        "14:00",
+        "14:30",
+        "15:00",
+        "15:30",
+        "16:00",
+        "16:30",
+        "17:00",
+        "17:30"
+    ];
+
+    const sql = `
+        SELECT horario
+        FROM agendamentos
+        WHERE profissional_id = ?
+        AND data = ?
+        AND status = 'agendado'
+    `;
+
+    db.all(
+        sql,
+        [profissional_id, data],
+        (erro, resultados) => {
+
+            if (erro) {
+
+                console.error(
+                    "Erro ao buscar horários:",
+                    erro
+                );
+
+                return res.status(500).json({
+                    sucesso: false,
+                    mensagem:
+                        "Erro ao buscar horários disponíveis."
+                });
+
+            }
+
+            const ocupados =
+                resultados.map(
+                    agendamento => agendamento.horario
+                );
+
+            const disponiveis =
+                horarios.filter(
+                    horario => !ocupados.includes(horario)
+                );
+
+            res.json({
+                sucesso: true,
+                horarios: disponiveis
+            });
+
+        }
+    );
+
+});
+
 
                     // -----------------------------
                     // CRIAR AGENDAMENTO
@@ -763,6 +900,161 @@ app.put("/api/agendamentos/:id/cancelar", (req, res) => {
 // INICIAR SERVIDOR
 // ========================================
 
+
+/* ========================================
+   PAINEL ADMINISTRATIVO
+======================================== */
+
+app.get("/api/admin/agendamentos", (req, res) => {
+
+    // Data de hoje no formato YYYY-MM-DD
+    const agora = new Date();
+
+    const ano = agora.getFullYear();
+    const mes = String(agora.getMonth() + 1).padStart(2, "0");
+    const dia = String(agora.getDate()).padStart(2, "0");
+
+    const hoje = `${ano}-${mes}-${dia}`;
+
+    // Lista os agendamentos ativos de hoje
+    const sqlAgendamentos = `
+        SELECT
+            a.id,
+            a.data,
+            a.horario,
+            a.status,
+            c.nome AS cliente,
+            s.nome AS servico,
+            s.preco AS preco,
+            p.nome AS profissional
+        FROM agendamentos a
+        JOIN clientes c ON c.id = a.cliente_id
+        JOIN servicos s ON s.id = a.servico_id
+        JOIN profissionais p ON p.id = a.profissional_id
+        WHERE a.data = ?
+        AND a.status IN ('agendado', 'confirmado')
+        ORDER BY a.horario ASC
+    `;
+
+    db.all(sqlAgendamentos, [hoje], (erro, agendamentos) => {
+
+        if (erro) {
+            console.error("Erro ao buscar agendamentos:", erro);
+
+            return res.status(500).json({
+                sucesso: false,
+                mensagem: "Erro ao buscar os agendamentos."
+            });
+        }
+
+        // Busca os totais para os cartões do painel
+        const sqlResumo = `
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM agendamentos
+                    WHERE data = ?
+                    AND status IN ('agendado', 'confirmado')
+                ) AS totalHoje,
+
+                (
+                    SELECT COUNT(*)
+                    FROM agendamentos
+                    WHERE data >= ?
+                    AND status IN ('agendado', 'confirmado')
+                ) AS proximos,
+
+                (
+                    SELECT COALESCE(SUM(s.preco), 0)
+                    FROM agendamentos a
+                    JOIN servicos s ON s.id = a.servico_id
+                    WHERE a.data = ?
+                      AND a.status IN ('agendado', 'confirmado')
+                ) AS faturamento
+        `;
+
+        db.get(sqlResumo, [hoje, hoje, hoje], (erroResumo, resumo) => {
+
+            if (erroResumo) {
+                console.error("Erro ao buscar resumo:", erroResumo);
+
+                return res.status(500).json({
+                    sucesso: false,
+                    mensagem: "Erro ao calcular o resumo."
+                });
+            }
+
+            res.json({
+                sucesso: true,
+                totalHoje: resumo.totalHoje,
+                proximos: resumo.proximos,
+                faturamento: resumo.faturamento,
+                agendamentos: agendamentos
+            });
+
+        });
+
+    });
+
+});
+
+
+/* ========================================
+   ALTERAR STATUS DO AGENDAMENTO PELO PAINEL
+======================================== */
+
+app.patch("/api/admin/agendamentos/:id/status", (req, res) => {
+    const id = Number(req.params.id);
+    const { status } = req.body;
+
+    if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({
+            sucesso: false,
+            mensagem: "Número de atendimento inválido."
+        });
+    }
+
+    if (!["confirmado", "cancelado"].includes(status)) {
+        return res.status(400).json({
+            sucesso: false,
+            mensagem: "Status inválido."
+        });
+    }
+
+    const sql = `
+        UPDATE agendamentos
+        SET status = ?
+        WHERE id = ?
+          AND status IN ('agendado', 'confirmado')
+    `;
+
+    db.run(sql, [status, id], function (erro) {
+        if (erro) {
+            console.error("Erro ao alterar atendimento:", erro);
+
+            return res.status(500).json({
+                sucesso: false,
+                mensagem: "Não foi possível alterar o atendimento."
+            });
+        }
+
+        if (this.changes === 0) {
+            return res.status(404).json({
+                sucesso: false,
+                mensagem: "Atendimento não encontrado ou já cancelado."
+            });
+        }
+
+        res.json({
+            sucesso: true,
+            mensagem: status === "confirmado"
+                ? "Atendimento confirmado!"
+                : "Atendimento cancelado!"
+        });
+    });
+});
+
+
 app.listen(PORTA, () => {
 
     console.log("");
@@ -774,5 +1066,124 @@ app.listen(PORTA, () => {
     );
     console.log("=================================");
     console.log("");
+
+});
+
+// ========================================
+// REMARCAR AGENDAMENTO
+// ========================================
+
+app.put("/api/agendamentos/:id/remarcar", (req, res) => {
+
+    const id = req.params.id;
+
+    const {
+        data,
+        horario
+    } = req.body;
+
+    // Verificar se os dados foram enviados
+    if (!data || !horario) {
+
+        return res.status(400).json({
+            sucesso: false,
+            mensagem: "Informe a nova data e o novo horário."
+        });
+
+    }
+
+    // Verificar se o horário já está ocupado
+    const verificarHorario = `
+        SELECT id
+        FROM agendamentos
+        WHERE profissional_id = (
+            SELECT profissional_id
+            FROM agendamentos
+            WHERE id = ?
+        )
+        AND data = ?
+        AND horario = ?
+        AND status = 'agendado'
+        AND id != ?
+    `;
+
+    db.get(
+        verificarHorario,
+        [id, data, horario, id],
+        (erro, agendamentoExistente) => {
+
+            if (erro) {
+
+                console.error(
+                    "Erro ao verificar horário:",
+                    erro
+                );
+
+                return res.status(500).json({
+                    sucesso: false,
+                    mensagem: "Erro ao verificar disponibilidade."
+                });
+
+            }
+
+            if (agendamentoExistente) {
+
+                return res.status(409).json({
+                    sucesso: false,
+                    mensagem:
+                        "Esse horário já está ocupado."
+                });
+
+            }
+
+            // Atualizar o atendimento
+            const atualizar = `
+                UPDATE agendamentos
+                SET data = ?, horario = ?
+                WHERE id = ?
+                AND status = 'agendado'
+            `;
+
+            db.run(
+                atualizar,
+                [data, horario, id],
+                function (erro) {
+
+                    if (erro) {
+
+                        console.error(
+                            "Erro ao remarcar:",
+                            erro
+                        );
+
+                        return res.status(500).json({
+                            sucesso: false,
+                            mensagem:
+                                "Erro ao remarcar atendimento."
+                        });
+
+                    }
+
+                    if (this.changes === 0) {
+
+                        return res.status(400).json({
+                            sucesso: false,
+                            mensagem:
+                                "Atendimento não encontrado ou já cancelado."
+                        });
+
+                    }
+
+                    res.json({
+                        sucesso: true,
+                        mensagem:
+                            "Atendimento remarcado com sucesso!"
+                    });
+
+                }
+            );
+
+        }
+    );
 
 });

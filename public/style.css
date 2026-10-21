@@ -1067,3 +1067,71 @@ footer {
     background: #d0002b;
     transform: scale(1.02);
 }
+
+/* ========================================
+   REMARCAÇÃO
+======================================== */
+
+.botao-remarcar {
+    width: 100%;
+    margin-top: 10px;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: #c9a227;
+    color: #111;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.botao-remarcar:hover {
+    background: #e0bd3b;
+    transform: scale(1.02);
+}
+
+.area-remarcacao {
+    margin-top: 20px;
+    padding: 20px;
+    border-radius: 10px;
+    background: #1c1b1b;
+    border: 1px solid #c9a227;
+}
+
+.area-remarcacao h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #c9a227;
+}
+
+.area-remarcacao label {
+    display: block;
+    margin-top: 12px;
+    margin-bottom: 5px;
+}
+
+.area-remarcacao input,
+.area-remarcacao select {
+    width: 100%;
+    padding: 11px;
+    border-radius: 6px;
+    border: 1px solid #777;
+    box-sizing: border-box;
+}
+
+.botao-confirmar-remarcacao {
+    width: 100%;
+    margin-top: 18px;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: #2e7d32;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.botao-confirmar-remarcacao:hover {
+    background: #388e3c;
+}

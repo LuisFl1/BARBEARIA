@@ -340,67 +340,72 @@
 
         </section>
 
+        
+<!-- DADOS DO CLIENTE -->
+<section class="etapa">
 
-        <!-- DADOS DO CLIENTE -->
-        <section class="etapa">
+    <h3>04. Seus dados</h3>
 
-            <h3>04. Seus dados</h3>
+    <p class="descricao">
+        Precisamos dessas informações para identificar seu atendimento.
+    </p>
 
-            <p class="descricao">
-                Precisamos dessas informações para identificar seu atendimento.
-            </p>
+    <div class="formulario">
 
+        <div class="campo">
+            <label for="nome">
+                Nome completo
+            </label>
 
-            <div class="formulario">
+            <input
+                type="text"
+                id="nome"
+                name="nome"
+                placeholder="Digite seu nome"
+                minlength="3"
+                maxlength="100"
+                autocomplete="name"
+                required
+            >
+        </div>
 
-                <div class="campo">
+        <div class="campo">
+            <label for="whatsapp">
+                WhatsApp
+            </label>
 
-                    <label for="nome">
-                        Nome completo
-                    </label>
+            <input
+                type="tel"
+                id="whatsapp"
+                name="whatsapp"
+                placeholder="(11) 99999-9999"
+                inputmode="numeric"
+                minlength="10"
+                maxlength="16"
+                autocomplete="tel"
+                required
+            >
+        </div>
 
-                    <input
-                        type="text"
-                        id="nome"
-                        placeholder="Digite seu nome"
-                    >
+        <div class="campo">
+            <label for="email">
+                E-mail
+            </label>
 
-                </div>
+            <input
+                type="email"
+                id="email"
+                name="email"
+                placeholder="seuemail@email.com"
+                maxlength="254"
+                autocomplete="email"
+                required
+            >
+        </div>
 
+    </div>
 
-                <div class="campo">
-
-                    <label for="whatsapp">
-                        WhatsApp
-                    </label>
-
-                    <input
-                        type="tel"
-                        id="whatsapp"
-                        placeholder="(11) 99999-9999"
-                    >
-
-                </div>
-
-
-                <div class="campo">
-
-                    <label for="email">
-                        E-mail
-                    </label>
-
-                    <input
-                        type="email"
-                        id="email"
-                        placeholder="seuemail@email.com"
-                    >
-
-                </div>
-
-            </div>
-
-        </section>
-
+</section>
 
         <!-- RESUMO -->
         <section class="resumo">

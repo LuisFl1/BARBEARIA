@@ -478,7 +478,7 @@ app.get("/api/horario-disponivel", (req, res) => {
         WHERE profissional_id = ?
         AND data = ?
         AND horario = ?
-        AND status = 'agendado'
+        AND status IN ('agendado', 'confirmado')
     `;
 
 
@@ -612,6 +612,42 @@ app.post("/api/agendamentos", (req, res) => {
 
     }
 
+    // ========================================
+// VALIDAR DADOS DO CLIENTE
+// ========================================
+
+// Remover espaços extras do nome
+const nomeLimpo = String(nome).trim();
+
+// Remover caracteres não numéricos do WhatsApp
+const whatsappLimpo = String(whatsapp).replace(/\D/g, "");
+
+// Remover espaços extras do e-mail
+const emailLimpo = String(email).trim().toLowerCase();
+
+// Validar nome
+if (nomeLimpo.length < 3 || nomeLimpo.length > 100) {
+    return res.status(400).json({
+        sucesso: false,
+        mensagem: "Informe um nome válido de 3 a 100 caracteres."
+    });
+}
+
+// Validar WhatsApp brasileiro com DDD
+if (!/^[1-9][0-9]{9,10}$/.test(whatsappLimpo)) {
+    return res.status(400).json({
+        sucesso: false,
+        mensagem: "Informe um WhatsApp válido com DDD."
+    });
+}
+
+// Validar e-mail
+if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) {
+    return res.status(400).json({
+        sucesso: false,
+        mensagem: "Informe um e-mail válido."
+    });
+}
 
     // -----------------------------
     // VERIFICAR HORÁRIO
@@ -623,7 +659,7 @@ app.post("/api/agendamentos", (req, res) => {
         WHERE profissional_id = ?
         AND data = ?
         AND horario = ?
-        AND status = 'agendado'
+        AND status IN ('agendado', 'confirmado')
     `;
 
 
@@ -673,9 +709,9 @@ app.post("/api/agendamentos", (req, res) => {
             db.run(
                 sqlCliente,
                 [
-                    nome,
-                    whatsapp,
-                    email
+                    nomeLimpo,
+                    whatsappLimpo,
+                    emailLimpo
                 ],
                 function (erro) {
 
@@ -741,7 +777,7 @@ app.get("/api/horarios-disponiveis", (req, res) => {
         FROM agendamentos
         WHERE profissional_id = ?
         AND data = ?
-        AND status = 'agendado'
+        AND status IN ('agendado', 'confirmado')
     `;
 
     db.all(
@@ -861,7 +897,7 @@ app.put("/api/agendamentos/:id/cancelar", (req, res) => {
         UPDATE agendamentos
         SET status = 'cancelado'
         WHERE id = ?
-        AND status = 'agendado'
+        AND status IN ('agendado', 'confirmado')
     `;
 
     db.run(sql, [id], function (erro) {
@@ -1103,7 +1139,7 @@ app.put("/api/agendamentos/:id/remarcar", (req, res) => {
         )
         AND data = ?
         AND horario = ?
-        AND status = 'agendado'
+        AND status IN ('agendado', 'confirmado')
         AND id != ?
     `;
 

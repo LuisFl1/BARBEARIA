@@ -619,6 +619,46 @@ botaoConfirmar.addEventListener(
         // ENVIAR PARA O SERVIDOR
         // -----------------------------
 
+// ========================================
+// VALIDAR DADOS ANTES DO ENVIO
+// ========================================
+
+const nomeLimpo = String(agendamento.nome || "").trim();
+
+const whatsappLimpo = String(
+    agendamento.whatsapp || ""
+).replace(/\D/g, "");
+
+const emailLimpo = String(
+    agendamento.email || ""
+).trim().toLowerCase();
+
+// Validar nome
+if (nomeLimpo.length < 3 || nomeLimpo.length > 100) {
+    alert("Informe um nome válido de 3 a 100 caracteres.");
+    document.querySelector("#nome").focus();
+    return;
+}
+
+// Validar WhatsApp
+if (!/^[1-9][0-9]{9,10}$/.test(whatsappLimpo)) {
+    alert("Informe um WhatsApp válido com DDD.");
+    document.querySelector("#whatsapp").focus();
+    return;
+}
+
+// Validar e-mail
+if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) {
+    alert("Informe um e-mail válido.");
+    document.querySelector("#email").focus();
+    return;
+}
+
+// Atualizar os dados antes do envio
+agendamento.nome = nomeLimpo;
+agendamento.whatsapp = whatsappLimpo;
+agendamento.email = emailLimpo;
+
         try {
 
             const resposta =

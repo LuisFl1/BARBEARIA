@@ -614,6 +614,17 @@ botaoConfirmar.addEventListener(
 
         }
 
+// ========================================
+// VALIDAR CÓDIGO DO E-MAIL
+// ========================================
+
+const codigoDigitado = campoCodigoEmail.value.trim();
+
+if (!/^\d{6}$/.test(codigoDigitado)) {
+    alert("Digite o código de 6 dígitos enviado ao seu e-mail.");
+    campoCodigoEmail.focus();
+    return;
+}
 
         // -----------------------------
         // ENVIAR PARA O SERVIDOR
@@ -694,7 +705,10 @@ agendamento.email = emailLimpo;
                                 agendamento.data,
 
                             horario:
-                                agendamento.horario
+                                agendamento.horario,
+
+                            codigo:
+                                campoCodigoEmail.value.trim()
 
                         })
 
@@ -1311,3 +1325,57 @@ async function confirmarRemarcacao(id) {
     }
 
 }
+
+
+ // ========================================
+ // ENVIAR CÓDIGO DE VERIFICAÇÃO POR E-MAIL
+ // ========================================
+
+const botaoEnviarCodigoEmail =
+    document.querySelector("#enviarCodigoEmail");
+
+const campoCodigoEmail =
+    document.querySelector("#codigoEmail");
+
+const mensagemCodigoEmail =
+    document.querySelector("#mensagemCodigoEmail");
+
+botaoEnviarCodigoEmail.addEventListener("click", async () => {
+    const email = campoEmail.value.trim().toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        alert("Informe um e-mail válido.");
+        campoEmail.focus();
+        return;
+    }
+
+    botaoEnviarCodigoEmail.disabled = true;
+    mensagemCodigoEmail.textContent = "Enviando código...";
+
+    try {
+        const resposta = await fetch("/api/email/enviar-codigo", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ email })
+        });
+
+        const dados = await resposta.json();
+
+        mensagemCodigoEmail.textContent =
+            dados.mensagem || "Não foi possível enviar o código.";
+
+        if (resposta.ok) {
+            campoCodigoEmail.value = "";
+            campoCodigoEmail.focus();
+        }
+
+    } catch (erro) {
+        console.error("Erro ao enviar código:", erro);
+        mensagemCodigoEmail.textContent =
+            "Erro de conexão com o servidor.";
+    } finally {
+        botaoEnviarCodigoEmail.disabled = false;
+    }
+});

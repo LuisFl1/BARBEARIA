@@ -403,6 +403,30 @@
             >
         </div>
 
+            
+<div class="campo">
+    <label for="codigoEmail">
+        Código de verificação do e-mail
+    </label>
+
+    <button type="button" id="enviarCodigoEmail">
+        ENVIAR CÓDIGO POR E-MAIL
+    </button>
+
+    <input
+        type="text"
+        id="codigoEmail"
+        name="codigoEmail"
+        placeholder="Digite o código de 6 dígitos"
+        inputmode="numeric"
+        maxlength="6"
+        autocomplete="one-time-code"
+    >
+
+    <p id="mensagemCodigoEmail" aria-live="polite"></p>
+</div>
+
+
     </div>
 
 </section>

@@ -1,6 +1,24 @@
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
+const crypto = require("crypto");
+
+require("dotenv").config();
+
+const nodemailer = require("nodemailer");
+
+// ========================================
+// CONFIGURAÇÃO DE ENVIO DE E-MAIL
+// ========================================
+
+const transportadorEmail = nodemailer.createTransport({
+    service: "gmail",
+
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
 
 const app = express();
 const PORTA = process.env.PORT || 3000;
@@ -190,12 +208,12 @@ db.serialize(() => {
             FOREIGN KEY (profissional_id)
                 REFERENCES profissionais(id),
 
-            UNIQUE (
-                profissional_id,
-                data,
-                horario
-            )
+        UNIQUE (
+            profissional_id,
+            data,
+            horario
         )
+    )
     `, (erro) => {
 
         if (erro) {
@@ -209,8 +227,35 @@ db.serialize(() => {
 
     });
 
+    
+// ========================================
+// TABELA DE VERIFICAÇÃO POR E-MAIL
+// ========================================
+
+db.run(`
+    CREATE TABLE IF NOT EXISTS verificacoes_email (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        codigo_hash TEXT NOT NULL,
+        expira_em INTEGER NOT NULL,
+        tentativas INTEGER DEFAULT 0,
+        utilizado INTEGER DEFAULT 0,
+        criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+`, (erro) => {
+
+    if (erro) {
+        console.error(
+            "❌ Erro ao criar tabela verificacoes_email:",
+            erro.message
+        );
+    } else {
+        console.log("✅ Tabela verificacoes_email pronta!");
+    }
+
 });
 
+}); // Fim da criação das tabelas
 
 // ========================================
 // INSERIR SERVIÇOS
@@ -359,6 +404,187 @@ db.get(
 
     }
 );
+
+
+// ========================================
+// ENVIAR CÓDIGO DE VERIFICAÇÃO POR E-MAIL
+// ========================================
+
+const ultimosEnviosEmail = new Map();
+
+app.post("/api/email/enviar-codigo", async (req, res) => {
+    const email = String(req.body.email || "")
+        .trim()
+        .toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({
+            sucesso: false,
+            mensagem: "Informe um e-mail válido."
+        });
+    }
+
+    const agora = Date.now();
+    const ultimoEnvio = ultimosEnviosEmail.get(email) || 0;
+
+    // Impede reenvios em menos de 60 segundos
+    if (agora - ultimoEnvio < 60000) {
+        return res.status(429).json({
+            sucesso: false,
+            mensagem: "Aguarde 60 segundos para solicitar outro código."
+        });
+    }
+
+    ultimosEnviosEmail.set(email, agora);
+
+    const codigo = crypto.randomInt(100000, 1000000).toString();
+
+    const codigoHash = crypto
+        .createHash("sha256")
+        .update(codigo)
+        .digest("hex");
+
+    const expiraEm = agora + 10 * 60 * 1000;
+
+    try {
+        await transportadorEmail.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: "Código de verificação - Barbearia",
+            text: `Seu código de verificação é: ${codigo}
+
+O código expira em 10 minutos.
+
+Se você não solicitou este código, ignore este e-mail.`
+        });
+
+        db.run(
+            `INSERT INTO verificacoes_email
+             (email, codigo_hash, expira_em, tentativas, utilizado)
+             VALUES (?, ?, ?, 0, 0)`,
+            [email, codigoHash, expiraEm],
+            function (erro) {
+                if (erro) {
+                    console.error("Erro ao salvar código:", erro);
+
+                    return res.status(500).json({
+                        sucesso: false,
+                        mensagem: "Não foi possível registrar o código."
+                    });
+                }
+
+                res.json({
+                    sucesso: true,
+                    mensagem: "Código enviado para seu e-mail!"
+                });
+            }
+        );
+    } catch (erro) {
+        console.error("Erro ao enviar e-mail:", erro.message);
+
+        ultimosEnviosEmail.delete(email);
+
+        return res.status(500).json({
+            sucesso: false,
+            mensagem: "Não foi possível enviar o e-mail."
+        });
+    }
+});
+
+
+// ========================================
+// VALIDAR CÓDIGO DE VERIFICAÇÃO
+// ========================================
+
+app.post("/api/email/verificar-codigo", (req, res) => {
+    const email = String(req.body.email || "")
+        .trim()
+        .toLowerCase();
+
+    const codigo = String(req.body.codigo || "").trim();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        !/^\d{6}$/.test(codigo)) {
+        return res.status(400).json({
+            sucesso: false,
+            mensagem: "Informe um e-mail e um código válido de 6 dígitos."
+        });
+    }
+
+    const sql = `
+        SELECT *
+        FROM verificacoes_email
+        WHERE email = ?
+        AND utilizado = 0
+        ORDER BY id DESC
+        LIMIT 1
+    `;
+
+    db.get(sql, [email], (erro, verificacao) => {
+        if (erro) {
+            console.error("Erro ao consultar código:", erro);
+
+            return res.status(500).json({
+                sucesso: false,
+                mensagem: "Erro ao verificar o código."
+            });
+        }
+
+        if (!verificacao) {
+            return res.status(400).json({
+                sucesso: false,
+                mensagem: "Código não encontrado. Solicite outro."
+            });
+        }
+
+        if (Date.now() > verificacao.expira_em) {
+            return res.status(400).json({
+                sucesso: false,
+                mensagem: "Código expirado. Solicite outro."
+            });
+        }
+
+        if (verificacao.tentativas >= 5) {
+            return res.status(429).json({
+                sucesso: false,
+                mensagem: "Limite de tentativas atingido. Solicite outro código."
+            });
+        }
+
+        const codigoHash = crypto
+            .createHash("sha256")
+            .update(codigo)
+            .digest("hex");
+
+        if (codigoHash !== verificacao.codigo_hash) {
+            db.run(
+                `UPDATE verificacoes_email
+                 SET tentativas = tentativas + 1
+                 WHERE id = ?`,
+                [verificacao.id],
+                (erroAtualizacao) => {
+                    if (erroAtualizacao) {
+                        console.error("Erro ao registrar tentativa:", erroAtualizacao);
+                    }
+
+                    return res.status(400).json({
+                        sucesso: false,
+                        mensagem: "Código incorreto."
+                    });
+                }
+            );
+
+            return;
+        }
+
+        // Ainda não marcamos o código como utilizado.
+        // Isso será feito na etapa de criação do agendamento.
+        return res.json({
+            sucesso: true,
+            mensagem: "Código válido! Você pode continuar."
+        });
+    });
+});
 
 
 // ========================================
@@ -578,159 +804,153 @@ app.get("/api/agendamentos/:id", (req, res) => {
     });
 });
 
-app.post("/api/agendamentos", (req, res) => {
-
+// O código de e-mail é validado na mesma transação da reserva.
+// Uma conexão SQLite exclusiva impede que requisições simultâneas
+// reutilizem o mesmo código ou reservem o mesmo horário.
+app.post("/api/agendamentos", async (req, res) => {
     const {
-        nome,
-        whatsapp,
-        email,
-        servico_id,
-        profissional_id,
-        data,
-        horario
-    } = req.body;
+        nome, whatsapp, email, servico_id,
+        profissional_id, data, horario, codigo
+    } = req.body || {};
 
-
-    // -----------------------------
-    // VALIDAR CAMPOS
-    // -----------------------------
-
-    if (
-        !nome ||
-        !whatsapp ||
-        !email ||
-        !servico_id ||
-        !profissional_id ||
-        !data ||
-        !horario
-    ) {
-
+    if (!nome || !whatsapp || !email || !servico_id ||
+        !profissional_id || !data || !horario || !codigo) {
         return res.status(400).json({
-            sucesso: false,
-            mensagem: "Preencha todos os campos."
+            sucesso: false, mensagem: "Preencha todos os campos."
         });
-
     }
 
-    // ========================================
-// VALIDAR DADOS DO CLIENTE
+    const nomeLimpo = String(nome).trim();
+    const whatsappLimpo = String(whatsapp).replace(/\D/g, "");
+    const emailLimpo = String(email).trim().toLowerCase();
+    const codigoLimpo = String(codigo).trim();
+    const servicoId = Number(servico_id);
+    const profissionalId = Number(profissional_id);
+
+    if (nomeLimpo.length < 3 || nomeLimpo.length > 100) {
+        return res.status(400).json({ sucesso: false, mensagem: "Informe um nome válido de 3 a 100 caracteres." });
+    }
+    if (!/^[1-9][0-9]{9,10}$/.test(whatsappLimpo)) {
+        return res.status(400).json({ sucesso: false, mensagem: "Informe um WhatsApp válido com DDD." });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) {
+        return res.status(400).json({ sucesso: false, mensagem: "Informe um e-mail válido." });
+    }
+    if (!/^\d{6}$/.test(codigoLimpo)) {
+        return res.status(400).json({ sucesso: false, mensagem: "Informe o código de verificação de 6 dígitos." });
+    }
+    if (!Number.isSafeInteger(servicoId) || servicoId <= 0 ||
+        !Number.isSafeInteger(profissionalId) || profissionalId <= 0 ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(data)) ||
+        !/^\d{2}:\d{2}$/.test(String(horario))) {
+        return res.status(400).json({ sucesso: false, mensagem: "Serviço, profissional, data ou horário inválidos." });
+    }
+
+    const conexao = new sqlite3.Database(caminhoBanco);
+    const executar = (sql, parametros = []) => new Promise((resolve, reject) => {
+        conexao.run(sql, parametros, function (erro) {
+            if (erro) reject(erro);
+            else resolve({ id: this.lastID, alteracoes: this.changes });
+        });
+    });
+    const consultar = (sql, parametros = []) => new Promise((resolve, reject) => {
+        conexao.get(sql, parametros, (erro, linha) => erro ? reject(erro) : resolve(linha));
+    });
+    const fechar = () => new Promise(resolve => conexao.close(() => resolve()));
+    let transacaoAberta = false;
+
+    try {
+        await executar("BEGIN IMMEDIATE TRANSACTION");
+        transacaoAberta = true;
+
+        const verificacao = await consultar(`
+            SELECT id, codigo_hash, expira_em, tentativas, utilizado
+            FROM verificacoes_email
+            WHERE email = ?
+            ORDER BY id DESC LIMIT 1
+        `, [emailLimpo]);
+
+        if (!verificacao || verificacao.utilizado || Date.now() > verificacao.expira_em) {
+            await executar("ROLLBACK");
+            transacaoAberta = false;
+            return res.status(400).json({ sucesso: false, mensagem: "Código inexistente, utilizado ou expirado. Solicite outro." });
+        }
+        if (verificacao.tentativas >= 5) {
+            await executar("ROLLBACK");
+            transacaoAberta = false;
+            return res.status(429).json({ sucesso: false, mensagem: "Limite de tentativas atingido. Solicite outro código." });
+        }
+
+        const hashInformado = crypto.createHash("sha256").update(codigoLimpo).digest("hex");
+        const correto = crypto.timingSafeEqual(
+            Buffer.from(hashInformado, "hex"),
+            Buffer.from(verificacao.codigo_hash, "hex")
+        );
+        if (!correto) {
+            await executar("UPDATE verificacoes_email SET tentativas = tentativas + 1 WHERE id = ?", [verificacao.id]);
+            await executar("COMMIT");
+            transacaoAberta = false;
+            return res.status(400).json({ sucesso: false, mensagem: "Código incorreto." });
+        }
+
+        const ocupado = await consultar(`
+            SELECT id FROM agendamentos
+            WHERE profissional_id = ? AND data = ? AND horario = ?
+            AND status IN ('agendado', 'confirmado')
+        `, [profissionalId, data, horario]);
+        if (ocupado) {
+            await executar("ROLLBACK");
+            transacaoAberta = false;
+            return res.status(409).json({ sucesso: false, mensagem: "Esse horário já está ocupado." });
+        }
+
+        const cliente = await executar(`
+            INSERT INTO clientes (nome, whatsapp, email) VALUES (?, ?, ?)
+        `, [nomeLimpo, whatsappLimpo, emailLimpo]);
+
+        const agendamento = await executar(`
+            INSERT INTO agendamentos
+            (cliente_id, servico_id, profissional_id, data, horario)
+            VALUES (?, ?, ?, ?, ?)
+        `, [cliente.id, servicoId, profissionalId, data, horario]);
+
+        const consumo = await executar(`
+            UPDATE verificacoes_email SET utilizado = 1
+            WHERE id = ? AND utilizado = 0
+        `, [verificacao.id]);
+        if (consumo.alteracoes !== 1) {
+            throw new Error("Não foi possível consumir o código de verificação.");
+        }
+
+        await executar("COMMIT");
+        transacaoAberta = false;
+        return res.status(201).json({
+            sucesso: true,
+            mensagem: "Agendamento realizado com sucesso!",
+            agendamento_id: agendamento.id
+        });
+    } catch (erro) {
+        console.error("Erro ao criar agendamento verificado:", erro);
+        if (transacaoAberta) {
+            try { await executar("ROLLBACK"); } catch (erroRollback) {
+                console.error("Erro ao desfazer transação:", erroRollback);
+            }
+        }
+        if (erro.code === "SQLITE_CONSTRAINT") {
+            return res.status(409).json({
+                sucesso: false,
+                mensagem: "Não foi possível reservar esse horário. Confira a disponibilidade e tente novamente."
+            });
+        }
+        return res.status(500).json({
+            sucesso: false, mensagem: "Não foi possível concluir o agendamento."
+        });
+    } finally {
+        await fechar();
+    }
+});
+
 // ========================================
-
-// Remover espaços extras do nome
-const nomeLimpo = String(nome).trim();
-
-// Remover caracteres não numéricos do WhatsApp
-const whatsappLimpo = String(whatsapp).replace(/\D/g, "");
-
-// Remover espaços extras do e-mail
-const emailLimpo = String(email).trim().toLowerCase();
-
-// Validar nome
-if (nomeLimpo.length < 3 || nomeLimpo.length > 100) {
-    return res.status(400).json({
-        sucesso: false,
-        mensagem: "Informe um nome válido de 3 a 100 caracteres."
-    });
-}
-
-// Validar WhatsApp brasileiro com DDD
-if (!/^[1-9][0-9]{9,10}$/.test(whatsappLimpo)) {
-    return res.status(400).json({
-        sucesso: false,
-        mensagem: "Informe um WhatsApp válido com DDD."
-    });
-}
-
-// Validar e-mail
-if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) {
-    return res.status(400).json({
-        sucesso: false,
-        mensagem: "Informe um e-mail válido."
-    });
-}
-
-    // -----------------------------
-    // VERIFICAR HORÁRIO
-    // -----------------------------
-
-    const verificarHorario = `
-        SELECT id
-        FROM agendamentos
-        WHERE profissional_id = ?
-        AND data = ?
-        AND horario = ?
-        AND status IN ('agendado', 'confirmado')
-    `;
-
-
-    db.get(
-        verificarHorario,
-        [
-            profissional_id,
-            data,
-            horario
-        ],
-        (erro, agendamentoExistente) => {
-
-            if (erro) {
-
-                console.error(erro);
-
-                return res.status(500).json({
-                    sucesso: false,
-                    mensagem: "Erro ao verificar horário."
-                });
-
-            }
-
-
-            if (agendamentoExistente) {
-
-                return res.status(409).json({
-                    sucesso: false,
-                    mensagem:
-                        "Esse horário já está ocupado."
-                });
-
-            }
-
-
-            // -----------------------------
-            // CRIAR CLIENTE
-            // -----------------------------
-
-            const sqlCliente = `
-                INSERT INTO clientes
-                (nome, whatsapp, email)
-                VALUES (?, ?, ?)
-            `;
-
-
-            db.run(
-                sqlCliente,
-                [
-                    nomeLimpo,
-                    whatsappLimpo,
-                    emailLimpo
-                ],
-                function (erro) {
-
-                    if (erro) {
-
-                        console.error(erro);
-
-                        return res.status(500).json({
-                            sucesso: false,
-                            mensagem:
-                                "Erro ao cadastrar cliente."
-                        });
-
-                    }
-
-
-                    const clienteId = this.lastID;
-
-                    // ========================================
 // LISTAR HORÁRIOS DISPONÍVEIS
 // ========================================
 
@@ -820,70 +1040,6 @@ app.get("/api/horarios-disponiveis", (req, res) => {
 
 });
 
-
-                    // -----------------------------
-                    // CRIAR AGENDAMENTO
-                    // -----------------------------
-
-                    const sqlAgendamento = `
-                        INSERT INTO agendamentos
-                        (
-                            cliente_id,
-                            servico_id,
-                            profissional_id,
-                            data,
-                            horario
-                        )
-                        VALUES (?, ?, ?, ?, ?)
-                    `;
-
-
-                    db.run(
-                        sqlAgendamento,
-                        [
-                            clienteId,
-                            servico_id,
-                            profissional_id,
-                            data,
-                            horario
-                        ],
-                        function (erro) {
-
-                            if (erro) {
-
-                                console.error(erro);
-
-                                return res.status(500).json({
-                                    sucesso: false,
-                                    mensagem:
-                                        "Erro ao criar agendamento."
-                                });
-
-                            }
-
-
-                            res.status(201).json({
-
-                                sucesso: true,
-
-                                mensagem:
-                                    "Agendamento realizado com sucesso!",
-
-                                agendamento_id:
-                                    this.lastID
-
-                            });
-
-                        }
-                    );
-
-                }
-            );
-
-        }
-    );
-
-});
 
 // ========================================
 // CANCELAR AGENDAMENTO
@@ -1090,6 +1246,28 @@ app.patch("/api/admin/agendamentos/:id/status", (req, res) => {
     });
 });
 
+// ========================================
+// TESTAR ENVIO DE E-MAIL
+// ========================================
+
+if (process.env.NODE_ENV !== "production") {
+
+    transportadorEmail.verify((erro) => {
+
+        if (erro) {
+            console.error(
+                "❌ Erro na conexão com o Gmail:",
+                erro.message
+            );
+        } else {
+            console.log(
+                "✅ Conexão com o Gmail funcionando!"
+            );
+        }
+
+    });
+
+}
 
 app.listen(PORTA, () => {
 

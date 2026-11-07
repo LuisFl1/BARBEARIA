@@ -14,3 +14,7 @@ database/*.db-shm
 
 # Logs
 *.log
+# Arquivos de backup e teste
+server.backup*
+.server.backup*
+teste-email.js
